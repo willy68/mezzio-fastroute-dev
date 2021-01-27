@@ -361,22 +361,6 @@ EOT;
     }
 
     /**
-     * Process all groups
-     *
-     * Adds all of the group routes to the collection and determines if the group
-     * strategy should be be used.
-     *
-     * @return void
-     */
-    protected function processGroups(): void
-    {
-        foreach ($this->groups as $key => $group) {
-            unset($this->groups[$key]);
-            $group();
-        }
-    }
-
-    /**
      * Checks for any missing route parameters
      *
      * @return array with minimum required parameters if any are missing or
@@ -530,6 +514,22 @@ EOT;
         }
 
         $this->router->addRoute($methods, $route->getPath(), $route->getPath());
+    }
+
+    /**
+     * Process all groups
+     *
+     * Adds all of the group routes to the collection and determines if the group
+     * strategy should be be used.
+     *
+     * @return void
+     */
+    protected function processGroups(): void
+    {
+        foreach ($this->groups as $key => $group) {
+            unset($this->groups[$key]);
+            $group();
+        }
     }
 
     /**
