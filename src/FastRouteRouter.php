@@ -10,41 +10,44 @@ declare(strict_types=1);
 
 namespace Mezzio\Router;
 
-use FastRoute\DataGenerator\GroupCountBased as RouteGenerator;
-use FastRoute\Dispatcher;
-use FastRoute\Dispatcher\GroupCountBased;
-use FastRoute\RouteCollector;
-use FastRoute\RouteParser\Std as RouteParser;
-use Fig\Http\Message\RequestMethodInterface as RequestMethod;
-use Laminas\Stdlib\ArrayUtils;
-use Psr\Http\Message\ServerRequestInterface as Request;
-
-use function array_keys;
-use function array_merge;
-use function array_reduce;
-use function array_reverse;
-use function array_unique;
-use function dirname;
-use function file_exists;
-use function file_put_contents;
-use function implode;
-use function is_array;
-use function is_dir;
-use function is_string;
-use function is_writable;
-use function preg_match;
-use function restore_error_handler;
-use function set_error_handler;
-use function sprintf;
-use function var_export;
-
 use const E_WARNING;
+use function is_dir;
+use function dirname;
+use function implode;
+use function sprintf;
+use function is_array;
+use function is_string;
+use function array_keys;
+
+use function preg_match;
+use function var_export;
+use FastRoute\Dispatcher;
+use function array_merge;
+use function file_exists;
+use function is_writable;
+use function array_reduce;
+use function array_unique;
+use function array_reverse;
+use FastRoute\RouteCollector;
+use Laminas\Stdlib\ArrayUtils;
+use function file_put_contents;
+use function set_error_handler;
+use function restore_error_handler;
+use FastRoute\Dispatcher\GroupCountBased;
+use FastRoute\RouteParser\Std as RouteParser;
+use Psr\Http\Message\ServerRequestInterface as Request;
+use Fig\Http\Message\RequestMethodInterface as RequestMethod;
+
+use Mezzio\Router\Middleware\Stack\MiddlewareAwareStackTrait;
+use FastRoute\DataGenerator\GroupCountBased as RouteGenerator;
 
 /**
  * Router implementation bridging nikic/fast-route.
  */
 class FastRouteRouter implements RouterInterface
 {
+    use MiddlewareAwareStackTrait;
+
     /**
      * Template used when generating the cache file.
      */
@@ -133,6 +136,13 @@ EOT;
     private $routesToInject = [];
 
     /**
+     * RouteGroup
+     *
+     * @var RouteGroup[]
+     */
+    private $groups = [];
+
+    /**
      * Constructor
      *
      * Accepts optionally a FastRoute RouteCollector and a callable factory
@@ -170,7 +180,7 @@ EOT;
      *
      * @param null|array $config Array of custom configuration options.
      */
-    private function loadConfig(array $config = null) : void
+    private function loadConfig(array $config = null): void
     {
         if (null === $config) {
             return;
@@ -196,14 +206,59 @@ EOT;
      * list or Route::HTTP_METHOD_ANY) and the path, and uses the path as
      * the name (to allow later lookup of the middleware).
      */
-    public function addRoute(Route $route) : void
+    public function addRoute(Route $route): Route
     {
         $this->routesToInject[] = $route;
+        return $route;
     }
 
-    public function match(Request $request) : RouteResult
+    /**
+     * Add RouteGroup
+     *
+     * Ex:
+     * ```
+     * $router->group('/admin', function (RouteGroup $route) {
+     *  $route->addRoute('/acme/route1', 'AcmeController::actionOne', 'route1', [GET]);
+     *  $route->addRoute('/acme/route2', 'AcmeController::actionTwo', 'route2', [GET])->lazyMiddleware(Middleware::class);
+     *  $route->addRoute('/acme/route3', 'AcmeController::actionThree', 'route3', [GET]);
+     * })
+     * ->middleware(Middleware::class);
+     * ```
+     *
+     * @param string $prefix
+     * @param callable $callable
+     * @return RouteGroup
+     */
+    public function group(string $prefix, callable $callable): RouteGroup
     {
-        // Inject any pending routes
+        $group = new RouteGroup($prefix, $callable, $this);
+        $this->groups[] = $group;
+
+        return $group;
+    }
+
+    /**
+     * Undocumented function
+     *
+     * @param string $prefixPath
+     * @param string|callable $callable
+     * @param string $prefixName
+     * @return RouteGroup
+     */
+    public function crud(string $prefixPath, $callable, string $prefixName): RouteGroup
+    {
+        return $this->group(
+            $prefixPath,
+            function (RouteGroup $route) use ($callable, $prefixName) {
+                $route->crud($callable, $prefixName);
+            }
+        );
+    }
+
+    public function match(Request $request): RouteResult
+    {
+        // Inject any pending routes and groups
+        $this->processGroups();
         $this->injectRoutes();
 
         $dispatchData = $this->getDispatchData();
@@ -236,12 +291,13 @@ EOT;
      * @throws Exception\RuntimeException if the route name is not known
      *     or a parameter value does not match its regex.
      */
-    public function generateUri(string $name, array $substitutions = [], array $options = []) : string
+    public function generateUri(string $name, array $substitutions = [], array $options = []): string
     {
-        // Inject any pending routes
+        // Inject any pending routes and groups
+        $this->processGroups();
         $this->injectRoutes();
 
-        if (! isset($this->routes[$name])) {
+        if (!isset($this->routes[$name])) {
             throw new Exception\RuntimeException(sprintf(
                 'Cannot generate URI for route "%s"; route not found',
                 $name
@@ -251,7 +307,7 @@ EOT;
         $route   = $this->routes[$name];
         $options = ArrayUtils::merge($route->getOptions(), $options);
 
-        if (! empty($options['defaults'])) {
+        if (!empty($options['defaults'])) {
             $substitutions = array_merge($options['defaults'], $substitutions);
         }
 
@@ -265,7 +321,7 @@ EOT;
             $missingParameters = $this->missingParameters($parts, $substitutions);
 
             // If not all parameters can be substituted, try the next route
-            if (! empty($missingParameters)) {
+            if (!empty($missingParameters)) {
                 continue;
             }
 
@@ -279,7 +335,7 @@ EOT;
                 }
 
                 // Check substitute value with regex
-                if (! preg_match('~^' . $part[1] . '$~', (string) $substitutions[$part[0]])) {
+                if (!preg_match('~^' . $part[1] . '$~', (string) $substitutions[$part[0]])) {
                     throw new Exception\RuntimeException(sprintf(
                         'Parameter value for [%s] did not match the regex `%s`',
                         $part[0],
@@ -305,12 +361,28 @@ EOT;
     }
 
     /**
+     * Process all groups
+     *
+     * Adds all of the group routes to the collection and determines if the group
+     * strategy should be be used.
+     *
+     * @return void
+     */
+    protected function processGroups(): void
+    {
+        foreach ($this->groups as $key => $group) {
+            unset($this->groups[$key]);
+            $group();
+        }
+    }
+
+    /**
      * Checks for any missing route parameters
      *
      * @return array with minimum required parameters if any are missing or
      *     an empty array if none are missing
      */
-    private function missingParameters(array $parts, array $substitutions) : array
+    private function missingParameters(array $parts, array $substitutions): array
     {
         $missingParameters = [];
 
@@ -325,7 +397,7 @@ EOT;
 
         // Check if all parameters exist
         foreach ($missingParameters as $param) {
-            if (! isset($substitutions[$param])) {
+            if (!isset($substitutions[$param])) {
                 // Return the parameters so they can be used in an
                 // exception if needed
                 return $missingParameters;
@@ -339,7 +411,7 @@ EOT;
     /**
      * Create a default FastRoute Collector instance
      */
-    private function createRouter() : RouteCollector
+    private function createRouter(): RouteCollector
     {
         return new RouteCollector(new RouteParser, new RouteGenerator);
     }
@@ -355,9 +427,9 @@ EOT;
      *
      * @return Dispatcher
      */
-    private function getDispatcher($data) : Dispatcher
+    private function getDispatcher($data): Dispatcher
     {
-        if (! $this->dispatcherCallback) {
+        if (!$this->dispatcherCallback) {
             $this->dispatcherCallback = $this->createDispatcherCallback();
         }
 
@@ -369,7 +441,7 @@ EOT;
     /**
      * Return a default implementation of a callback that can return a Dispatcher.
      */
-    private function createDispatcherCallback() : callable
+    private function createDispatcherCallback(): callable
     {
         return function ($data) {
             return new GroupCountBased($data);
@@ -382,7 +454,7 @@ EOT;
      * If the failure was due to the HTTP method, passes the allowed HTTP
      * methods to the factory.
      */
-    private function marshalFailedRoute(array $result) : RouteResult
+    private function marshalFailedRoute(array $result): RouteResult
     {
         if ($result[0] === Dispatcher::METHOD_NOT_ALLOWED) {
             return RouteResult::fromRouteFailure($result[1]);
@@ -394,7 +466,7 @@ EOT;
     /**
      * Marshals a route result based on the results of matching and the current HTTP method.
      */
-    private function marshalMatchedRoute(array $result, string $method) : RouteResult
+    private function marshalMatchedRoute(array $result, string $method): RouteResult
     {
         $path  = $result[1];
         $route = array_reduce($this->routes, function ($matched, $route) use ($path, $method) {
@@ -406,7 +478,7 @@ EOT;
                 return $matched;
             }
 
-            if (! $route->allowsMethod($method)) {
+            if (!$route->allowsMethod($method)) {
                 return $matched;
             }
 
@@ -420,7 +492,7 @@ EOT;
         $params = $result[2];
 
         $options = $route->getOptions();
-        if (! empty($options['defaults'])) {
+        if (!empty($options['defaults'])) {
             $params = array_merge($options['defaults'], $params);
         }
 
@@ -430,7 +502,7 @@ EOT;
     /**
      * Inject queued Route instances into the underlying router.
      */
-    private function injectRoutes() : void
+    private function injectRoutes(): void
     {
         foreach ($this->routesToInject as $index => $route) {
             $this->injectRoute($route);
@@ -441,7 +513,7 @@ EOT;
     /**
      * Inject a Route instance into the underlying router.
      */
-    private function injectRoute(Route $route) : void
+    private function injectRoute(Route $route): void
     {
         // Filling the routes' hash-map is required by the `generateUri` method
         $this->routes[$route->getName()] = $route;
@@ -466,7 +538,7 @@ EOT;
      *
      * If caching is enabled, store the freshly generated data to file.
      */
-    private function getDispatchData() : array
+    private function getDispatchData(): array
     {
         if ($this->hasCache) {
             return $this->dispatchData;
@@ -487,7 +559,7 @@ EOT;
      * @throws Exception\InvalidCacheException If the cache file contains
      *     invalid data
      */
-    private function loadDispatchData() : void
+    private function loadDispatchData(): void
     {
         set_error_handler(function () {
         }, E_WARNING); // suppress php warnings
@@ -499,7 +571,7 @@ EOT;
             return;
         }
 
-        if (! is_array($dispatchData)) {
+        if (!is_array($dispatchData)) {
             throw new Exception\InvalidCacheException(sprintf(
                 'Invalid cache file "%s"; cache file MUST return an array',
                 $this->cacheFile
@@ -525,21 +597,21 @@ EOT;
     {
         $cacheDir = dirname($this->cacheFile);
 
-        if (! is_dir($cacheDir)) {
+        if (!is_dir($cacheDir)) {
             throw new Exception\InvalidCacheDirectoryException(sprintf(
                 'The cache directory "%s" does not exist',
                 $cacheDir
             ));
         }
 
-        if (! is_writable($cacheDir)) {
+        if (!is_writable($cacheDir)) {
             throw new Exception\InvalidCacheDirectoryException(sprintf(
                 'The cache directory "%s" is not writable',
                 $cacheDir
             ));
         }
 
-        if (file_exists($this->cacheFile) && ! is_writable($this->cacheFile)) {
+        if (file_exists($this->cacheFile) && !is_writable($this->cacheFile)) {
             throw new Exception\InvalidCacheException(sprintf(
                 'The cache file %s is not writable',
                 $this->cacheFile
@@ -552,7 +624,7 @@ EOT;
         );
     }
 
-    private function marshalMethodNotAllowedResult(array $result) : RouteResult
+    private function marshalMethodNotAllowedResult(array $result): RouteResult
     {
         $path = $result[1];
         $allowedMethods = array_reduce($this->routes, function ($allowedMethods, $route) use ($path) {
