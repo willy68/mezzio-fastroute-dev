@@ -47,6 +47,7 @@ use FastRoute\DataGenerator\GroupCountBased as RouteGenerator;
 class FastRouteRouter implements RouterInterface
 {
     use MiddlewareAwareStackTrait;
+    use RouteCollectionTrait;
 
     /**
      * Template used when generating the cache file.
@@ -218,9 +219,9 @@ EOT;
      * Ex:
      * ```
      * $router->group('/admin', function (RouteGroup $route) {
-     *  $route->addRoute('/acme/route1', 'AcmeController::actionOne', 'route1', [GET]);
-     *  $route->addRoute('/acme/route2', 'AcmeController::actionTwo', 'route2', [GET])->lazyMiddleware(Middleware::class);
-     *  $route->addRoute('/acme/route3', 'AcmeController::actionThree', 'route3', [GET]);
+     *  $route->route('/acme/route1', 'AcmeController::actionOne', 'route1', [GET]);
+     *  $route->route('/acme/route2', 'AcmeController::actionTwo', 'route2', [GET])->lazyMiddleware(Middleware::class);
+     *  $route->route('/acme/route3', 'AcmeController::actionThree', 'route3', [GET]);
      * })
      * ->middleware(Middleware::class);
      * ```
