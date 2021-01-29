@@ -28,12 +28,6 @@
             "config-provider": "Mezzio\\Router\\FastRouteRouter\\ConfigProvider"
         }
     },
-    "repositories": [
-        {
-            "type": "git",
-            "url": "https://github.com/willy68/mezzio-router-dev.git"
-        }
-    ],
     "require": {
         "php": "^7.3 || ~8.0.0",
         "fig/http-message-util": "^1.1.2",
