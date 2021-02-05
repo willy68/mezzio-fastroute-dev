@@ -125,14 +125,14 @@ EOT;
     /**
      * All attached routes as Route instances
      *
-     * @var Route[]
+     * @var RouteInterface[]
      */
     private $routes = [];
 
     /**
      * Routes to inject into the underlying RouteCollector.
      *
-     * @var Route[]
+     * @var RouteInterface[]
      */
     private $routesToInject = [];
 
@@ -200,7 +200,7 @@ EOT;
      * list or Route::HTTP_METHOD_ANY) and the path, and uses the path as
      * the name (to allow later lookup of the middleware).
      */
-    public function addRoute(Route $route): Route
+    public function addRoute(RouteInterface $route): RouteInterface
     {
         $this->routesToInject[] = $route;
         return $route;
@@ -253,6 +253,7 @@ EOT;
             ));
         }
 
+        /** @var Route $route */
         $route   = $this->routes[$name];
         $options = ArrayUtils::merge($route->getOptions(), $options);
 
