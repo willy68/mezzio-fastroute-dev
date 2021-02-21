@@ -47,6 +47,7 @@ use FastRoute\DataGenerator\GroupCountBased as RouteGenerator;
 class FastRouteRouter implements RouterInterface
 {
     use MiddlewareAwareStackTrait;
+    use RouteCollectionTrait;
 
     /**
      * Template used when generating the cache file.
