@@ -35,7 +35,7 @@
         "laminas/laminas-zendframework-bridge": "^1.0",
         "willy68/mezzio-router-dev": "dev-master",
         "nikic/fast-route": "^1.2",
-        "psr/container": "^1.0",
+        "psr/container": "^2.0",
         "psr/http-message": "^1.0.1"
     },
     "require-dev": {
